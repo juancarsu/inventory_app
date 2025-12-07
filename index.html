@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema de Inventario</title>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <?!= include('css'); ?>
+</head>
+
+<body>
+  <!-- Navigation -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <h1 class="nav-title">📦 Gestión de Inventario</h1>
+      <div class="nav-menu">
+        <button class="nav-btn active" data-view="dashboard">Dashboard</button>
+        <button class="nav-btn" data-view="productos">Productos</button>
+        <button class="nav-btn" data-view="almacenes">Almacenes</button>
+        <button class="nav-btn" data-view="stock">Stock</button>
+        <button class="nav-btn" data-view="scanner">Escáner</button>
+        <button class="nav-btn" data-view="configuracion">⚙️ Configuración</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <div class="container">
+    <!-- Dashboard View -->
+    <div id="dashboard-view" class="view active">
+      <h2>Dashboard</h2>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon">📦</div>
+          <div class="stat-content">
+            <div class="stat-value" id="total-productos">0</div>
+            <div class="stat-label">Productos</div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon">🏢</div>
+          <div class="stat-content">
+            <div class="stat-value" id="total-almacenes">0</div>
+            <div class="stat-label">Almacenes</div>
+          </div>
+        </div>
+
+        <div class="stat-card warning">
+          <div class="stat-icon">⚠️</div>
+          <div class="stat-content">
+            <div class="stat-value" id="total-alertas">0</div>
+            <div class="stat-label">Alertas Stock Bajo</div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon">📊</div>
+          <div class="stat-content">
+            <div class="stat-value" id="total-movimientos">0</div>
+            <div class="stat-label">Movimientos Hoy</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="alerts-section">
+        <h3>⚠️ Alertas de Stock Bajo</h3>
+        <div id="alerts-container"></div>
+      </div>
+
+      <div class="movements-section">
+        <h3>📋 Movimientos Recientes</h3>
+        <div class="table-container">
+          <table id="movements-table">
+            <thead>
+              <tr>
+                <th>Fecha/Hora</th>
+                <th>Producto</th>
+                <th>Almacén</th>
+                <th>Tipo</th>
+                <th>Cantidad</th>
+                <th>Observaciones</th>
+              </tr>
+            </thead>
+            <tbody id="movements-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Productos View -->
+    <div id="productos-view" class="view">
+      <div class="view-header">
+        <h2>Productos</h2>
+        <div>
+          <button class="btn btn-secondary" onclick="showImportModal()">📥 Importar CSV/Excel</button>
+          <button class="btn btn-primary" onclick="showProductModal()">+ Nuevo Producto</button>
+        </div>
+      </div>
+
+      <div class="search-bar">
+        <input type="text" id="search-productos" placeholder="🔍 Buscar por nombre, EAN o categoría..."
+          onkeyup="filterProductos()">
+      </div>
+
+      <div class="table-container">
+        <table id="productos-table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>EAN</th>
+              <th>Cód. Proveedor</th>
+              <th>Proveedor</th>
+              <th>Categoría</th>
+              <th>Stock Mín.</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="productos-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Almacenes View -->
+    <div id="almacenes-view" class="view">
+      <div class="view-header">
+        <h2>Almacenes</h2>
+        <button class="btn btn-primary" onclick="showWarehouseModal()">+ Nuevo Almacén</button>
+      </div>
+
+      <div class="cards-grid" id="almacenes-grid"></div>
+    </div>
+
+    <!-- Stock View -->
+    <div id="stock-view" class="view">
+      <div class="view-header">
+        <h2>Control de Stock</h2>
+        <button class="btn btn-primary" onclick="showMovementModal()">+ Registrar Movimiento</button>
+      </div>
+
+      <div class="filter-bar">
+        <select id="filter-almacen" onchange="filterStock()">
+          <option value="">Todos los almacenes</option>
+        </select>
+      </div>
+
+      <div class="table-container">
+        <table id="stock-table">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>EAN</th>
+              <th>Almacén</th>
+              <th>Cantidad</th>
+              <th>Stock Mín.</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="stock-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Scanner View -->
+    <div id="scanner-view" class="view">
+      <h2>Escáner de Códigos de Barras</h2>
+
+      <div class="scanner-container">
+        <div id="scanner-reader"></div>
+        <div class="scanner-controls">
+          <button class="btn btn-primary" id="start-scanner" onclick="startScanner()">Iniciar Escáner</button>
+          <button class="btn btn-secondary" id="stop-scanner" onclick="stopScanner()"
+            style="display:none;">Detener</button>
+        </div>
+
+        <div class="manual-input">
+          <input type="text" id="manual-ean" placeholder="O ingresa el código (EAN, código proveedor, etc.)">
+          <button class="btn btn-primary" onclick="searchByEAN()">Buscar</button>
+        </div>
+
+        <div id="scanner-result"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Product Modal -->
+  <div id="product-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="product-modal-title">Nuevo Producto</h3>
+        <span class="close" onclick="closeProductModal()">&times;</span>
+      </div>
+      <form id="product-form" onsubmit="saveProduct(event)">
+        <input type="hidden" id="product-id">
+
+        <div class="form-group">
+          <label>Nombre *</label>
+          <input type="text" id="product-nombre" required>
+        </div>
+
+        <div class="form-group">
+          <label>Descripción</label>
+          <textarea id="product-descripcion" rows="3"></textarea>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Código EAN</label>
+            <input type="text" id="product-ean">
+          </div>
+
+          <div class="form-group">
+            <label>Código Proveedor</label>
+            <input type="text" id="product-codigo-proveedor" placeholder="Código del proveedor">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <button type="button" class="btn btn-secondary" onclick="lookupProduct()" style="width: 100%;">
+            🔍 Buscar por cualquier código (EAN, Proveedor o Producto)
+          </button>
+          <small style="color: #666; display: block; margin-top: 0.5rem;">
+            Ingresa cualquier código en los campos de arriba o abajo y haz clic para buscar
+          </small>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="product-proveedor">Proveedor</label>
+            <select id="product-proveedor">
+              <!-- Populated dynamically -->
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="product-categoria">Categoría</label>
+            <select id="product-categoria">
+              <!-- Populated dynamically -->
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Código Producto (Interno)</label>
+            <input type="text" id="product-codigo" placeholder="Código interno opcional">
+          </div>
+
+          <div class="form-group">
+            <label>Stock Mínimo</label>
+            <input type="number" id="product-stock-minimo" value="0">
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeProductModal()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Warehouse Modal -->
+  <div id="warehouse-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="warehouse-modal-title">Nuevo Almacén</h3>
+        <span class="close" onclick="closeWarehouseModal()">&times;</span>
+      </div>
+      <form id="warehouse-form" onsubmit="saveWarehouse(event)">
+        <input type="hidden" id="warehouse-id">
+
+        <div class="form-group">
+          <label>Nombre *</label>
+          <input type="text" id="warehouse-nombre" required>
+        </div>
+
+        <div class="form-group">
+          <label>Ubicación</label>
+          <input type="text" id="warehouse-ubicacion">
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeWarehouseModal()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Movement Modal -->
+  <div id="movement-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Registrar Movimiento</h3>
+        <span class="close" onclick="closeMovementModal()">&times;</span>
+      </div>
+      <form id="movement-form" onsubmit="saveMovement(event)">
+        <div class="form-group">
+          <label>Producto *</label>
+          <select id="movement-producto" required></select>
+        </div>
+
+        <div class="form-group">
+          <label>Almacén *</label>
+          <select id="movement-almacen" required></select>
+        </div>
+
+        <div class="form-group">
+          <label>Tipo *</label>
+          <select id="movement-tipo" required>
+            <option value="ENTRADA">Entrada</option>
+            <option value="SALIDA">Salida</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Cantidad *</label>
+          <input type="number" id="movement-cantidad" min="1" required>
+        </div>
+
+        <div class="form-group">
+          <label>Observaciones</label>
+          <textarea id="movement-observaciones" rows="3"></textarea>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeMovementModal()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Registrar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Import CSV Modal -->
+  <div id="import-modal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+      <div class="modal-header">
+        <h3>📥 Importar Productos desde CSV/Excel</h3>
+        <span class="close" onclick="closeImportModal()">&times;</span>
+      </div>
+
+      <div style="padding: 1.5rem;">
+        <!-- Instructions Section -->
+        <div
+          style="background: #f0f9ff; border: 2px solid #bae6fd; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem;">
+          <h4 style="color: #0369a1; margin-bottom: 1rem; font-size: 1.1rem;">📋 Instrucciones</h4>
+          <ol style="margin-left: 1.5rem; color: #0c4a6e; line-height: 1.8;">
+            <li>Descarga la <a href="#" onclick="downloadSampleCSV(); return false;"
+                style="color: #0284c7; font-weight: 600;">plantilla CSV de ejemplo</a></li>
+            <li>Rellena el archivo con tus productos</li>
+            <li>Sube el archivo usando el botón de abajo</li>
+          </ol>
+        </div>
+
+        <!-- Format Section -->
+        <div
+          style="background: #fefce8; border: 2px solid #fde047; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem;">
+          <h4 style="color: #854d0e; margin-bottom: 1rem; font-size: 1.1rem;">📊 Formato del CSV</h4>
+          <div style="color: #713f12; line-height: 1.8;">
+            <p style="margin-bottom: 0.5rem;"><strong>Columna requerida:</strong> <code
+                style="background: white; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.9rem;">Nombre</code>
+            </p>
+            <p style="margin-bottom: 0;"><strong>Columnas opcionales:</strong> <code
+                style="background: white; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.85rem;">Descripcion, EAN, Codigo_Proveedor, Proveedor, Categoria, Codigo_Producto, Stock_Minimo</code>
+            </p>
+          </div>
+        </div>
+
+        <!-- Duplicates Info -->
+        <div
+          style="background: #ede9fe; border: 2px solid #c4b5fd; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem;">
+          <div style="display: flex; align-items: start; gap: 0.75rem;">
+            <span style="font-size: 1.5rem;">ℹ️</span>
+            <div style="color: #5b21b6; line-height: 1.6;">
+              <strong>Duplicados:</strong> Si un producto ya existe (mismo EAN, Código Proveedor o Código Producto), se
+              actualizará con los nuevos datos.
+            </div>
+          </div>
+        </div>
+
+        <!-- File Upload Section -->
+        <div class="form-group">
+          <label style="font-size: 1rem; margin-bottom: 0.75rem;">Seleccionar archivo CSV</label>
+          <input type="file" id="csv-file-input" accept=".csv,.txt"
+            style="width: 100%; padding: 0.75rem; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 1rem; cursor: pointer;">
+        </div>
+
+        <!-- Results Section -->
+        <div id="import-results" style="display: none; margin-top: 1.5rem;">
+          <h4 style="margin-bottom: 1rem; color: #1f2937; font-size: 1.1rem;">Resultados de la Importación</h4>
+          <div id="import-summary" style="margin-bottom: 1rem;"></div>
+          <div id="import-errors"></div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeImportModal()">Cancelar</button>
+        <button type="button" class="btn btn-primary" onclick="processCSVImport()">Importar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Configuración View -->
+  <div id="configuracion-view" class="view">
+    <div class="config-container" style="padding-bottom: 0;">
+      <div class="view-header" style="margin-bottom: 1rem;">
+        <div>
+          <h2>⚙️ Configuración</h2>
+          <p>Gestiona las listas de proveedores y categorías</p>
+        </div>
+      </div>
+    </div>
+    <div class="config-container">
+      <!-- Proveedores Section -->
+      <div class="config-section">
+        <div class="config-section-header">
+          <h3>📦 Proveedores</h3>
+          <button class="btn btn-primary" onclick="showAddConfigModal('Proveedor')">+ Añadir Proveedor</button>
+        </div>
+        <div id="proveedores-list" class="config-list"></div>
+      </div>
+      <!-- Categorías Section -->
+      <div class="config-section">
+        <div class="config-section-header">
+          <h3>📂 Categorías</h3>
+          <button class="btn btn-primary" onclick="showAddConfigModal('Categoria')">+ Añadir Categoría</button>
+        </div>
+        <div id="categorias-list" class="config-list"></div>
+      </div>
+    </div>
+  </div>
+  <!-- Add Config Modal -->
+  <div id="add-config-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="add-config-title">Añadir</h3>
+        <span class="close" onclick="closeAddConfigModal()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="config-value-input">Nombre</label>
+          <input type="text" id="config-value-input" placeholder="Ingrese el nombre" class="form-control">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAddConfigModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveConfigValue()">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Barcode Modal -->
+  <div id="barcode-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="barcode-product-name">Código de Barras</h3>
+        <span class="close" onclick="closeBarcodeModal()">&times;</span>
+      </div>
+
+      <div class="modal-body" style="text-align: center; padding: 2rem;">
+        <svg id="barcode-svg"></svg>
+        <p id="barcode-value" style="margin-top: 1rem; font-size: 1.1rem; color: #6b7280;"></p>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeBarcodeModal()">Cerrar</button>
+        <button class="btn btn-primary" onclick="downloadBarcode()">📥 Descargar PNG</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Warehouse Detail Modal -->
+  <div id="warehouse-detail-modal" class="modal">
+    <div class="modal-content warehouse-detail-content">
+      <div class="modal-header">
+        <h3 id="warehouse-detail-title">📍 Almacén</h3>
+        <span class="close" onclick="closeWarehouseDetail()">&times;</span>
+      </div>
+
+      <div class="modal-body">
+        <!-- Summary Stats -->
+        <div class="warehouse-stats">
+          <div class="stat-mini-card">
+            <div class="stat-mini-icon">📦</div>
+            <div class="stat-mini-content">
+              <div class="stat-mini-value" id="detail-total-products">0</div>
+              <div class="stat-mini-label">Productos</div>
+            </div>
+          </div>
+          <div class="stat-mini-card">
+            <div class="stat-mini-icon">📊</div>
+            <div class="stat-mini-content">
+              <div class="stat-mini-value" id="detail-total-units">0</div>
+              <div class="stat-mini-label">Unidades</div>
+            </div>
+          </div>
+          <div class="stat-mini-card warning">
+            <div class="stat-mini-icon">⚠️</div>
+            <div class="stat-mini-content">
+              <div class="stat-mini-value" id="detail-low-stock">0</div>
+              <div class="stat-mini-label">Stock Bajo</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Inventory by Category -->
+        <div id="warehouse-inventory-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="loading" class="loading">
+    <div class="spinner"></div>
+  </div>
+
+  <?!= include('js'); ?>
+</body>
+
+</html>

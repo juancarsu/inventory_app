@@ -1,0 +1,1192 @@
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+    // Global state
+    let appData = {
+        productos: [],
+        almacenes: [],
+        stock: [],
+        movimientos: [],
+        config: { proveedores: [], categorias: [] }
+    };
+
+    let html5QrCode = null;
+    let currentView = 'dashboard'; // Track current active view
+    let currentConfigType = '';
+
+    // Initialize app
+    window.onload = function () {
+        loadAllData();
+        setupNavigation();
+    };
+
+    // Navigation
+    function setupNavigation() {
+        const navBtns = document.querySelectorAll('.nav-btn');
+        navBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const view = btn.dataset.view;
+                switchView(view);
+
+                // Update active button
+                navBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+    }
+
+    function switchView(viewName) {
+        const views = document.querySelectorAll('.view');
+        views.forEach(v => v.classList.remove('active'));
+
+        const targetView = document.getElementById(viewName + '-view');
+        if (targetView) {
+            targetView.classList.add('active');
+            currentView = viewName; // Track current view
+
+            // Load view-specific data
+            if (viewName === 'dashboard') loadDashboard();
+            else if (viewName === 'productos') loadProductos();
+            else if (viewName === 'almacenes') loadAlmacenes();
+            else if (viewName === 'stock') loadStock();
+            else if (viewName === 'configuracion') loadConfiguracion();
+        }
+    }
+
+    // Data loading
+    function loadAllData() {
+        showLoading();
+        google.script.run
+            .withSuccessHandler(data => {
+                appData = data;
+                appData.config = data.config || { proveedores: [], categorias: [] };
+                // Reload current active view
+                if (currentView === 'dashboard') loadDashboard();
+                else if (currentView === 'productos') loadProductos();
+                else if (currentView === 'almacenes') loadAlmacenes();
+                else if (currentView === 'stock') loadStock();
+                else if (currentView === 'configuracion') loadConfiguracion();
+                hideLoading();
+            })
+            .withFailureHandler(err => {
+                console.error(err);
+                alert('Error al cargar datos: ' + err.message);
+                hideLoading();
+            })
+            .getAllData();
+    }
+
+    function showLoading() {
+        document.getElementById('loading').classList.add('active');
+    }
+
+    function hideLoading() {
+        document.getElementById('loading').classList.remove('active');
+    }
+
+    // Dashboard
+    function loadDashboard() {
+        document.getElementById('total-productos').textContent = appData.productos.length;
+        document.getElementById('total-almacenes').textContent = appData.almacenes.length;
+
+        // Get today's movements
+        const today = new Date().toISOString().split('T')[0];
+        const todayMovements = appData.movimientos.filter(m => {
+            return m.Fecha && m.Fecha.startsWith(today);
+        });
+        document.getElementById('total-movimientos').textContent = todayMovements.length;
+
+        // Load alerts
+        google.script.run
+            .withSuccessHandler(alerts => {
+                document.getElementById('total-alertas').textContent = alerts.length;
+                displayAlerts(alerts);
+            })
+            .getLowStockAlerts();
+
+        // Load recent movements
+        displayMovements();
+    }
+
+    function displayAlerts(alerts) {
+        const container = document.getElementById('alerts-container');
+
+        if (alerts.length === 0) {
+            container.innerHTML = '<div class="alert-empty">✅ No hay alertas de stock bajo</div>';
+            return;
+        }
+
+        container.innerHTML = alerts.map(alert => `
+    <div class="alert-item">
+      <strong>${alert.Producto}</strong> (${alert.EAN || 'Sin EAN'})<br>
+      Almacén: ${alert.Almacen} | 
+      Stock actual: ${alert.CantidadActual} | 
+      Mínimo: ${alert.StockMinimo}
+    </div >
+        `).join('');
+    }
+
+    function displayMovements() {
+        const tbody = document.getElementById('movements-tbody');
+
+        if (!appData.movimientos || appData.movimientos.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="movements-empty">No hay movimientos registrados</td></tr>';
+            return;
+        }
+
+        // Sort by date (most recent first) and limit to 10
+        const recentMovements = appData.movimientos
+            .sort((a, b) => new Date(b.Fecha) - new Date(a.Fecha))
+            .slice(0, 10);
+
+        tbody.innerHTML = recentMovements.map(m => {
+            const producto = appData.productos.find(p => p.Id_Producto === m.Id_Producto);
+            const almacen = appData.almacenes.find(a => a.Id_Almacen === m.Id_Almacen);
+
+            const fecha = new Date(m.Fecha);
+            const fechaStr = fecha.toLocaleDateString('es-ES', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+            });
+            const horaStr = fecha.toLocaleTimeString('es-ES', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            const tipoClass = m.Tipo === 'ENTRADA' ? 'movement-type-entrada' : 'movement-type-salida';
+            const tipoIcon = m.Tipo === 'ENTRADA' ? '📥' : '📤';
+
+            return `
+      <tr>
+        <td class="movement-date">${fechaStr}<br>${horaStr}</td>
+        <td>${producto ? producto.Nombre : 'Desconocido'}</td>
+        <td>${almacen ? almacen.Nombre : 'Desconocido'}</td>
+        <td class="${tipoClass}">${tipoIcon} ${m.Tipo}</td>
+        <td><strong>${m.Cantidad}</strong></td>
+        <td>${m.Observaciones || '-'}</td>
+      </tr>
+        `;
+        }).join('');
+    }
+
+    // Productos
+    function loadProductos() {
+        const tbody = document.getElementById('productos-tbody');
+        tbody.innerHTML = appData.productos.map(p => `
+    <tr>
+      <td>${p.Nombre}</td>
+      <td>${p.EAN || '-'}</td>
+      <td>${p.Codigo_Proveedor || '-'}</td>
+      <td>${p.Proveedor || '-'}</td>
+      <td>${p.Categoria || '-'}</td>
+      <td>${p.Stock_Minimo || 0}</td>
+      <td>
+        <button class="btn btn-small btn-primary" onclick="editProduct('${p.Id_Producto}')">Editar</button>
+        <button class="btn btn-small btn-secondary" onclick="generateBarcode('${p.Id_Producto}')">📊 Código</button>
+        <button class="btn btn-small btn-danger" onclick="deleteProduct('${p.Id_Producto}')">Eliminar</button>
+      </td>
+    </tr>
+        `).join('');
+    }
+
+    function filterProductos() {
+        const search = document.getElementById('search-productos').value.toLowerCase().trim();
+        const tbody = document.getElementById('productos-tbody');
+
+        if (!search) {
+            loadProductos();
+            return;
+        }
+
+        const filtered = appData.productos.filter(p => {
+            // Convert all fields to lowercase strings for comparison
+            const nombre = (p.Nombre || '').toLowerCase();
+            const ean = (p.EAN || '').toString().toLowerCase();
+            const codigoProveedor = (p.Codigo_Proveedor || '').toString().toLowerCase();
+            const proveedor = (p.Proveedor || '').toLowerCase();
+            const categoria = (p.Categoria || '').toLowerCase();
+            const codigoProducto = (p.Codigo_Producto || '').toString().toLowerCase();
+
+            return nombre.includes(search) ||
+                ean.includes(search) ||
+                codigoProveedor.includes(search) ||
+                proveedor.includes(search) ||
+                categoria.includes(search) ||
+                codigoProducto.includes(search);
+        });
+
+        tbody.innerHTML = filtered.map(p => `
+    <tr>
+      <td>${p.Nombre}</td>
+      <td>${p.EAN || '-'}</td>
+      <td>${p.Codigo_Proveedor || '-'}</td>
+      <td>${p.Proveedor || '-'}</td>
+      <td>${p.Categoria || '-'}</td>
+      <td>${p.Stock_Minimo || 0}</td>
+      <td>
+        <button class="btn btn-small btn-primary" onclick="editProduct('${p.Id_Producto}')">Editar</button>
+        <button class="btn btn-small btn-secondary" onclick="generateBarcode('${p.Id_Producto}')">📊 Código</button>
+        <button class="btn btn-small btn-danger" onclick="deleteProduct('${p.Id_Producto}')">Eliminar</button>
+      </td>
+    </tr>
+        `).join('');
+    }
+
+    function showProductModal(productId = null) {
+        const modal = document.getElementById('product-modal');
+        const form = document.getElementById('product-form');
+        form.reset();
+
+        // Update datalists with current config
+        updateProductFormDataLists();
+
+        if (productId) {
+            const product = appData.productos.find(p => p.Id_Producto === productId);
+            if (product) {
+                document.getElementById('product-modal-title').textContent = 'Editar Producto';
+                document.getElementById('product-id').value = product.Id_Producto;
+                document.getElementById('product-nombre').value = product.Nombre;
+                document.getElementById('product-descripcion').value = product.Descripcion || '';
+                document.getElementById('product-ean').value = product.EAN || '';
+                document.getElementById('product-codigo-proveedor').value = product.Codigo_Proveedor || '';
+
+                // Handle Selects with Custom Values
+                setSelectValue('product-proveedor', product.Proveedor, appData.config.proveedores);
+                setSelectValue('product-categoria', product.Categoria, appData.config.categorias);
+
+                document.getElementById('product-codigo').value = product.Codigo_Producto || '';
+                document.getElementById('product-stock-minimo').value = product.Stock_Minimo || 0;
+            }
+        } else {
+            document.getElementById('product-modal-title').textContent = 'Nuevo Producto';
+        }
+
+        modal.classList.add('active');
+    }
+
+    function closeProductModal() {
+        document.getElementById('product-modal').classList.remove('active');
+    }
+
+    function editProduct(id) {
+        showProductModal(id);
+    }
+
+    function saveProduct(event) {
+        event.preventDefault();
+
+        const formData = {
+            Id_Producto: document.getElementById('product-id').value,
+            Nombre: document.getElementById('product-nombre').value,
+            Descripcion: document.getElementById('product-descripcion').value,
+            EAN: document.getElementById('product-ean').value,
+            Codigo_Proveedor: document.getElementById('product-codigo-proveedor').value,
+            'Codigo Proveedor': document.getElementById('product-codigo-proveedor').value, // Fallback
+            'Código Proveedor': document.getElementById('product-codigo-proveedor').value, // Fallback with accent
+            Proveedor: document.getElementById('product-proveedor').value,
+            Categoria: document.getElementById('product-categoria').value,
+            Codigo_Producto: document.getElementById('product-codigo').value,
+            Stock_Minimo: document.getElementById('product-stock-minimo').value,
+            'Stock Minimo': document.getElementById('product-stock-minimo').value, // Fallback
+            URL_Foto: '' // For future use
+        };
+
+        showLoading();
+        google.script.run
+            .withSuccessHandler(() => {
+                closeProductModal();
+                loadAllData();
+            })
+            .withFailureHandler(err => {
+                alert('Error al guardar: ' + err.message);
+                hideLoading();
+            })
+            .saveRecord('Productos', formData);
+    }
+
+    function deleteProduct(id) {
+        if (!confirm('¿Estás seguro de eliminar este producto?')) return;
+
+        showLoading();
+        google.script.run
+            .withSuccessHandler(() => {
+                loadAllData();
+            })
+            .withFailureHandler(err => {
+                alert('Error al eliminar: ' + err.message);
+                hideLoading();
+            })
+            .deleteRecord('Productos', id);
+    }
+
+    function generateBarcode(productId) {
+        const product = appData.productos.find(p => p.Id_Producto === productId);
+        if (!product) return;
+
+        // Determine which code to use
+        let code = product.EAN || product.Codigo_Proveedor;
+        if (!code) {
+            alert('Este producto no tiene código EAN ni código de proveedor');
+            return;
+        }
+
+        // Clean code (remove spaces)
+        code = code.toString().trim();
+
+        // Set product name in modal
+        document.getElementById('barcode-product-name').textContent =
+            `Código de Barras - ${product.Nombre}`;
+        document.getElementById('barcode-value').textContent = code;
+
+        // Determine format
+        let format = 'CODE128'; // Default
+        if (/^\d{13}$/.test(code)) {
+            format = 'EAN13';
+        } else if (/^\d{8}$/.test(code)) {
+            format = 'EAN8';
+        }
+
+        try {
+            // Generate barcode
+            JsBarcode("#barcode-svg", code, {
+                format: format,
+                width: 2,
+                height: 100,
+                displayValue: true,
+                fontSize: 16,
+                margin: 10
+            });
+
+            // Show modal
+            document.getElementById('barcode-modal').classList.add('active');
+        } catch (error) {
+            alert('Error al generar código de barras: ' + error.message);
+        }
+    }
+
+    function closeBarcodeModal() {
+        document.getElementById('barcode-modal').classList.remove('active');
+    }
+
+    function downloadBarcode() {
+        const svg = document.getElementById('barcode-svg');
+        const productName = document.getElementById('barcode-product-name').textContent
+            .replace('Código de Barras - ', '')
+            .replace(/[^a-z0-9]/gi, '_');
+
+        // Convert SVG to canvas
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const data = new XMLSerializer().serializeToString(svg);
+        const img = new Image();
+
+        img.onload = function () {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+
+            // Download
+            canvas.toBlob(function (blob) {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `barcode_${productName}.png`;
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+        };
+
+        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(data)));
+    }
+
+    function lookupProduct() {
+        // Try to get code from any of the three code fields
+        const eanCode = document.getElementById('product-ean').value.trim();
+        const proveedorCode = document.getElementById('product-codigo-proveedor').value.trim();
+        const productoCode = document.getElementById('product-codigo').value.trim();
+
+        const code = eanCode || proveedorCode || productoCode;
+
+        // Determine which field was used
+        let usedField = '';
+        if (eanCode) usedField = 'EAN';
+        else if (proveedorCode) usedField = 'Código Proveedor';
+        else if (productoCode) usedField = 'Código Producto';
+
+        if (!code) {
+            alert('Por favor ingresa un código en cualquiera de los campos:\n• Código EAN\n• Código Proveedor\n• Código Producto (Interno)');
+            return;
+        }
+
+        // Show more descriptive loading message
+        const loadingEl = document.getElementById('loading');
+        const originalText = loadingEl.textContent;
+        loadingEl.textContent = `Buscando "${code}"(${usedField}) en base de datos local y APIs externas...`;
+        showLoading();
+
+        google.script.run
+            .withSuccessHandler(result => {
+                loadingEl.textContent = originalText;
+                hideLoading();
+
+                if (result && result.found) {
+                    // If found in local database, fill all fields from existing product
+                    if (result.product) {
+                        const p = result.product;
+                        document.getElementById('product-nombre').value = p.Nombre || '';
+                        document.getElementById('product-descripcion').value = p.Descripcion || '';
+                        document.getElementById('product-ean').value = p.EAN || '';
+                        document.getElementById('product-codigo-proveedor').value = p.Codigo_Proveedor || '';
+                        document.getElementById('product-proveedor').value = p.Proveedor || '';
+                        document.getElementById('product-categoria').value = p.Categoria || '';
+                        document.getElementById('product-codigo').value = p.Codigo_Producto || '';
+                        document.getElementById('product-stock-minimo').value = p.Stock_Minimo || 0;
+
+                        // Show match details
+                        const matchInfo = result.matchType ?
+                            `\nTipo de coincidencia: ${getMatchTypeLabel(result.matchType)} \nCampo encontrado: ${result.matchField} ` : '';
+
+                        alert(`✅ Producto encontrado en ${result.source}${matchInfo} \n\nBuscaste: ${code} (${usedField}) \nNombre: ${p.Nombre} \nProveedor: ${p.Proveedor || 'N/A'} `);
+                    } else {
+                        // Found in external API, fill available fields
+                        if (result.nombre) document.getElementById('product-nombre').value = result.nombre;
+                        if (result.descripcion) document.getElementById('product-descripcion').value = result.descripcion;
+                        if (result.categoria) document.getElementById('product-categoria').value = result.categoria;
+
+                        const source = result.source || 'base de datos externa';
+                        alert(`✅ Información encontrada en ${source} \n\nBuscaste: ${code} (${usedField}) \nNombre: ${result.nombre} \nCategoría: ${result.categoria || 'N/A'} `);
+                    }
+                } else {
+                    alert(`ℹ️ No se encontró información para el código: \n"${code}"(${usedField}) \n\nPuedes completar la información manualmente.`);
+                }
+            })
+            .withFailureHandler(err => {
+                loadingEl.textContent = originalText;
+                hideLoading();
+                alert('❌ Error en la búsqueda: ' + err.message + '\n\nPuedes completar la información manualmente.');
+            })
+            .lookupProduct(code);
+    }
+
+    function getMatchTypeLabel(matchType) {
+        const labels = {
+            'exact': 'Exacta',
+            'normalized': 'Normalizada (flexible)',
+            'partial': 'Parcial'
+        };
+        return labels[matchType] || matchType;
+    }
+
+    // Almacenes
+    function loadAlmacenes() {
+        const grid = document.getElementById('almacenes-grid');
+        grid.innerHTML = appData.almacenes.map(a => `
+    <div class="warehouse-card" onclick="showWarehouseDetail('${a.Id_Almacen}')" style="cursor: pointer;">
+      <h3>🏢 ${a.Nombre}</h3>
+      <p>📍 ${a.Ubicacion || 'Sin ubicación'}</p>
+      <div class="warehouse-actions" onclick="event.stopPropagation()">
+        <button class="btn btn-small btn-primary" onclick="editWarehouse('${a.Id_Almacen}')">Editar</button>
+        <button class="btn btn-small btn-danger" onclick="deleteWarehouse('${a.Id_Almacen}')">Eliminar</button>
+      </div>
+    </div>
+  `).join('');
+    }
+
+    function showWarehouseModal(warehouseId = null) {
+        const modal = document.getElementById('warehouse-modal');
+        const form = document.getElementById('warehouse-form');
+        form.reset();
+
+        if (warehouseId) {
+            const warehouse = appData.almacenes.find(a => a.Id_Almacen === warehouseId);
+            if (warehouse) {
+                document.getElementById('warehouse-modal-title').textContent = 'Editar Almacén';
+                document.getElementById('warehouse-id').value = warehouse.Id_Almacen;
+                document.getElementById('warehouse-nombre').value = warehouse.Nombre;
+                document.getElementById('warehouse-ubicacion').value = warehouse.Ubicacion || '';
+            }
+        } else {
+            document.getElementById('warehouse-modal-title').textContent = 'Nuevo Almacén';
+        }
+
+        modal.classList.add('active');
+    }
+
+    function closeWarehouseModal() {
+        document.getElementById('warehouse-modal').classList.remove('active');
+    }
+
+    function editWarehouse(id) {
+        showWarehouseModal(id);
+    }
+
+    function saveWarehouse(event) {
+        event.preventDefault();
+
+        const formData = {
+            Id_Almacen: document.getElementById('warehouse-id').value,
+            Nombre: document.getElementById('warehouse-nombre').value,
+            Ubicacion: document.getElementById('warehouse-ubicacion').value
+        };
+
+        showLoading();
+        google.script.run
+            .withSuccessHandler(() => {
+                closeWarehouseModal();
+                loadAllData();
+            })
+            .withFailureHandler(err => {
+                alert('Error al guardar: ' + err.message);
+                hideLoading();
+            })
+            .saveRecord('Almacenes', formData);
+    }
+
+    function deleteWarehouse(id) {
+        if (!confirm('¿Estás seguro de eliminar este almacén?')) return;
+
+        showLoading();
+        google.script.run
+            .withSuccessHandler(() => {
+                loadAllData();
+            })
+            .withFailureHandler(err => {
+                alert('Error al eliminar: ' + err.message);
+                hideLoading();
+            })
+            .deleteRecord('Almacenes', id);
+    }
+
+    function showWarehouseDetail(warehouseId) {
+        const warehouse = appData.almacenes.find(a => a.Id_Almacen === warehouseId);
+        if (!warehouse) return;
+
+        // Set title
+        document.getElementById('warehouse-detail-title').textContent =
+            `📍 ${warehouse.Nombre}${warehouse.Ubicacion ? ' - ' + warehouse.Ubicacion : ''}`;
+
+        // Get stock for this warehouse
+        const warehouseStock = appData.stock.filter(s => s.Id_Almacen === warehouseId);
+
+        // Calculate summary stats
+        const totalProducts = warehouseStock.length;
+        const totalUnits = warehouseStock.reduce((sum, s) => sum + (s.Cantidad || 0), 0);
+
+        let lowStockCount = 0;
+        warehouseStock.forEach(s => {
+            const producto = appData.productos.find(p => p.Id_Producto === s.Id_Producto);
+            const stockMin = producto ? (producto.Stock_Minimo || 0) : 0;
+            if (s.Cantidad <= stockMin) lowStockCount++;
+        });
+
+        // Update stats
+        document.getElementById('detail-total-products').textContent = totalProducts;
+        document.getElementById('detail-total-units').textContent = totalUnits;
+        document.getElementById('detail-low-stock').textContent = lowStockCount;
+
+        // Group by category
+        const container = document.getElementById('warehouse-inventory-container');
+
+        if (warehouseStock.length === 0) {
+            container.innerHTML = '<div class="empty-warehouse">📦 Este almacén está vacío</div>';
+        } else {
+            const byCategory = {};
+
+            warehouseStock.forEach(s => {
+                const producto = appData.productos.find(p => p.Id_Producto === s.Id_Producto);
+                if (!producto) return;
+
+                const category = producto.Categoria || 'Sin categoría';
+                if (!byCategory[category]) byCategory[category] = [];
+                byCategory[category].push({ stock: s, producto });
+            });
+
+            // Build HTML
+            container.innerHTML = Object.entries(byCategory).map(([category, items]) => {
+                const itemsHtml = items.map(({ stock, producto }) => {
+                    const cantidad = stock.Cantidad || 0;
+                    const stockMin = producto.Stock_Minimo || 0;
+
+                    let statusClass = '';
+                    let statusText = 'OK';
+                    if (cantidad <= stockMin) {
+                        statusClass = 'critical';
+                        statusText = 'Crítico';
+                    } else if (cantidad <= stockMin * 1.5) {
+                        statusClass = 'low';
+                        statusText = 'Bajo';
+                    }
+
+                    // Calculate percentage for bar
+                    const percentage = stockMin > 0 ? Math.min((cantidad / (stockMin * 2)) * 100, 100) : 100;
+
+                    return `
+                        <div class="inventory-item ${statusClass}">
+                            <div class="inventory-item-info">
+                                <h5>${producto.Nombre}</h5>
+                                <span class="item-code">${producto.EAN || 'Sin EAN'}</span>
+                            </div>
+                            <div class="inventory-item-stock">
+                                <div class="inventory-quantity">${cantidad}</div>
+                                <span class="status-badge status-${statusClass || 'ok'}">${statusText}</span>
+                                <div class="stock-bar">
+                                    <div class="stock-bar-fill" style="width: ${percentage}%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                return `
+                    <div class="category-section">
+                        <h4>📂 ${category} (${items.length})</h4>
+                        <div class="inventory-grid">
+                            ${itemsHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Show modal
+        document.getElementById('warehouse-detail-modal').classList.add('active');
+    }
+
+    function closeWarehouseDetail() {
+        document.getElementById('warehouse-detail-modal').classList.remove('active');
+    }
+
+    // Stock
+    function loadStock() {
+        // Populate warehouse filter
+        const filterSelect = document.getElementById('filter-almacen');
+        filterSelect.innerHTML = '<option value="">Todos los almacenes</option>' +
+            appData.almacenes.map(a => `<option value="${a.Id_Almacen}">${a.Nombre}</option>`).join('');
+
+        displayStock();
+    }
+
+    function filterStock() {
+        displayStock();
+    }
+
+    function displayStock() {
+        const filterAlmacen = document.getElementById('filter-almacen').value;
+        const tbody = document.getElementById('stock-tbody');
+
+        let stockToDisplay = appData.stock;
+        if (filterAlmacen) {
+            stockToDisplay = stockToDisplay.filter(s => s.Id_Almacen === filterAlmacen);
+        }
+
+        tbody.innerHTML = stockToDisplay.map(s => {
+            const producto = appData.productos.find(p => p.Id_Producto === s.Id_Producto);
+            const almacen = appData.almacenes.find(a => a.Id_Almacen === s.Id_Almacen);
+            const stockMin = producto ? (producto.Stock_Minimo || 0) : 0;
+            const cantidad = s.Cantidad || 0;
+
+            let statusClass = 'status-ok';
+            let statusText = 'OK';
+            if (cantidad <= stockMin) {
+                statusClass = 'status-critical';
+                statusText = 'Crítico';
+            } else if (cantidad <= stockMin * 1.5) {
+                statusClass = 'status-low';
+                statusText = 'Bajo';
+            }
+
+            return `
+      <tr>
+        <td>${producto ? producto.Nombre : 'Desconocido'}</td>
+        <td>${producto && producto.EAN ? producto.EAN : '-'}</td>
+        <td>${almacen ? almacen.Nombre : 'Desconocido'}</td>
+        <td>${cantidad}</td>
+        <td>${stockMin}</td>
+        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+      </tr>
+    `;
+        }).join('');
+    }
+
+    function showMovementModal() {
+        const modal = document.getElementById('movement-modal');
+        const form = document.getElementById('movement-form');
+        form.reset();
+
+        // Populate product select
+        const productSelect = document.getElementById('movement-producto');
+        productSelect.innerHTML = '<option value="">Selecciona un producto</option>' +
+            appData.productos.map(p => `<option value="${p.Id_Producto}">${p.Nombre}</option>`).join('');
+
+        // Populate warehouse select
+        const warehouseSelect = document.getElementById('movement-almacen');
+        warehouseSelect.innerHTML = '<option value="">Selecciona un almacén</option>' +
+            appData.almacenes.map(a => `<option value="${a.Id_Almacen}">${a.Nombre}</option>`).join('');
+
+        modal.classList.add('active');
+    }
+
+    function closeMovementModal() {
+        document.getElementById('movement-modal').classList.remove('active');
+    }
+
+    function saveMovement(event) {
+        event.preventDefault();
+
+        const movementData = {
+            Id_Producto: document.getElementById('movement-producto').value,
+            Id_Almacen: document.getElementById('movement-almacen').value,
+            Tipo: document.getElementById('movement-tipo').value,
+            Cantidad: document.getElementById('movement-cantidad').value,
+            Observaciones: document.getElementById('movement-observaciones').value
+        };
+
+        showLoading();
+        google.script.run
+            .withSuccessHandler(() => {
+                closeMovementModal();
+                loadAllData();
+                alert('✅ Movimiento registrado correctamente');
+            })
+            .withFailureHandler(err => {
+                alert('Error al registrar movimiento: ' + err.message);
+                hideLoading();
+            })
+            .recordMovement(movementData);
+    }
+
+    // Scanner
+    function startScanner() {
+        const readerElement = document.getElementById('scanner-reader');
+
+        if (!html5QrCode) {
+            html5QrCode = new Html5Qrcode("scanner-reader");
+        }
+
+        const config = {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+            aspectRatio: 1.0
+        };
+
+        html5QrCode.start(
+            { facingMode: "environment" },
+            config,
+            (decodedText, decodedResult) => {
+                // Success callback
+                console.log(`Code scanned: ${decodedText} `);
+                processScannedCode(decodedText);
+                stopScanner();
+            },
+            (errorMessage) => {
+                // Error callback (can be ignored for scanning errors)
+            }
+        ).then(() => {
+            document.getElementById('start-scanner').style.display = 'none';
+            document.getElementById('stop-scanner').style.display = 'inline-block';
+        }).catch(err => {
+            alert('Error al iniciar el escáner: ' + err);
+        });
+    }
+
+    function stopScanner() {
+        if (html5QrCode && html5QrCode.isScanning) {
+            html5QrCode.stop().then(() => {
+                document.getElementById('start-scanner').style.display = 'inline-block';
+                document.getElementById('stop-scanner').style.display = 'none';
+            }).catch(err => {
+                console.error('Error stopping scanner:', err);
+            });
+        }
+    }
+
+    function searchByEAN() {
+        const code = document.getElementById('manual-ean').value;
+        if (!code) {
+            alert('Por favor ingresa un código');
+            return;
+        }
+        processScannedCode(code);
+    }
+
+    function processScannedCode(code) {
+        showLoading();
+        // First try to find in local database by any code
+        google.script.run
+            .withSuccessHandler(result => {
+                hideLoading();
+                // Pass the full result object to display function
+                displayScannedProduct(code, result);
+            })
+            .withFailureHandler(err => {
+                hideLoading();
+                alert('Error al buscar producto: ' + err.message);
+            })
+            .searchProductByCode(code);
+    }
+
+    function displayScannedProduct(ean, result) {
+        const resultDiv = document.getElementById('scanner-result');
+
+        // Extract product from result (could be direct product or wrapped in result object)
+        const product = result && result.product ? result.product : result;
+
+        if (product) {
+            // Get stock info
+            const productStock = appData.stock.filter(s => s.Id_Producto === product.Id_Producto);
+            const stockInfo = productStock.map(s => {
+                const almacen = appData.almacenes.find(a => a.Id_Almacen === s.Id_Almacen);
+                return `${almacen ? almacen.Nombre : 'Desconocido'}: ${s.Cantidad || 0} unidades`;
+            }).join('<br>');
+
+            // Build match info if available
+            let matchInfo = '';
+            if (result && result.matchType) {
+                const matchTypeLabel = getMatchTypeLabel(result.matchType);
+                matchInfo = `<p><strong>Coincidencia:</strong> ${matchTypeLabel} (${result.matchField})</p>`;
+            }
+
+            resultDiv.innerHTML = `
+      <div class="product-result">
+        <h3>✅ Producto Encontrado</h3>
+        <p><strong>Nombre:</strong> ${product.Nombre}</p>
+        <p><strong>EAN:</strong> ${product.EAN || '-'}</p>
+        <p><strong>Categoría:</strong> ${product.Categoria || '-'}</p>
+        <p><strong>Código:</strong> ${product.Codigo_Producto || '-'}</p>
+        ${matchInfo}
+        <p><strong>Stock:</strong><br>${stockInfo || 'Sin stock registrado'}</p>
+        <div style="margin-top: 1rem;">
+          <button class="btn btn-primary" onclick="quickMovement('${product.Id_Producto}')">Registrar Movimiento</button>
+        </div>
+      </div>
+    `;
+        } else {
+            resultDiv.innerHTML = `
+      <div class="product-result">
+        <h3>❌ Producto No Encontrado</h3>
+        <p>No se encontró ningún producto con el código: <strong>${ean}</strong></p>
+        <div style="margin-top: 1rem;">
+          <button class="btn btn-primary" onclick="createProductFromEAN('${ean}')">Crear Nuevo Producto</button>
+        </div>
+      </div>
+    `;
+        }
+    }
+
+    function quickMovement(productId) {
+        showMovementModal();
+        document.getElementById('movement-producto').value = productId;
+    }
+
+    function createProductFromEAN(code) {
+        showProductModal();
+        // Try to determine if it's an EAN or supplier code
+        if (code.length >= 8 && /^\d+$/.test(code)) {
+            document.getElementById('product-ean').value = code;
+        } else {
+            document.getElementById('product-codigo-proveedor').value = code;
+        }
+        lookupProduct();
+    }
+
+    // CSV Import Functions
+    function showImportModal() {
+        const modal = document.getElementById('import-modal');
+        document.getElementById('csv-file-input').value = '';
+        document.getElementById('import-results').style.display = 'none';
+        modal.classList.add('active');
+    }
+
+    function closeImportModal() {
+        document.getElementById('import-modal').classList.remove('active');
+    }
+
+    function downloadSampleCSV() {
+        showLoading();
+        google.script.run
+            .withSuccessHandler(csvContent => {
+                hideLoading();
+                // Create download link
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+                link.setAttribute('href', url);
+                link.setAttribute('download', 'plantilla_productos.csv');
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            })
+            .withFailureHandler(err => {
+                hideLoading();
+                alert('Error al generar plantilla: ' + err.message);
+            })
+            .generateSampleCSV();
+    }
+
+    function processCSVImport() {
+        const fileInput = document.getElementById('csv-file-input');
+        const file = fileInput.files[0];
+
+        if (!file) {
+            alert('Por favor selecciona un archivo CSV');
+            return;
+        }
+
+        // Check file extension
+        const fileName = file.name.toLowerCase();
+        if (!fileName.endsWith('.csv') && !fileName.endsWith('.txt')) {
+            alert('Por favor selecciona un archivo CSV (.csv o .txt)');
+            return;
+        }
+
+        showLoading();
+
+        // Read file content
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            const csvContent = e.target.result;
+
+            // Send to backend for processing
+            google.script.run
+                .withSuccessHandler(result => {
+                    hideLoading();
+                    displayImportResults(result);
+
+                    // Reload data if successful
+                    if (result.success && (result.created > 0 || result.updated > 0)) {
+                        loadAllData();
+                    }
+                })
+                .withFailureHandler(err => {
+                    hideLoading();
+                    alert('Error al procesar el archivo: ' + err.message);
+                })
+                .importProductsFromCSV(csvContent);
+        };
+
+        reader.onerror = function () {
+            hideLoading();
+            alert('Error al leer el archivo');
+        };
+
+        reader.readAsText(file, 'UTF-8');
+    }
+
+    function displayImportResults(result) {
+        const resultsDiv = document.getElementById('import-results');
+        const summaryDiv = document.getElementById('import-summary');
+        const errorsDiv = document.getElementById('import-errors');
+
+        resultsDiv.style.display = 'block';
+
+        if (!result.success) {
+            summaryDiv.innerHTML = `
+                <div style="background: #fee; border: 1px solid #fcc; padding: 1rem; border-radius: 4px;">
+                    <strong>❌ Error:</strong> ${result.error}
+                </div>
+            `;
+            errorsDiv.innerHTML = '';
+            return;
+        }
+
+        // Display summary
+        const successCount = result.created + result.updated;
+        const totalProcessed = result.total - (result.errors ? result.errors.length : 0);
+
+        summaryDiv.innerHTML = `
+            <div style="background: #efe; border: 1px solid #cfc; padding: 1rem; border-radius: 4px;">
+                <strong>✅ Importación completada</strong><br>
+                Total de filas: ${result.total}<br>
+                Productos creados: ${result.created}<br>
+                Productos actualizados: ${result.updated}<br>
+                Errores: ${result.errors ? result.errors.length : 0}
+            </div>
+        `;
+
+        // Display errors if any
+        if (result.errors && result.errors.length > 0) {
+            errorsDiv.innerHTML = `
+                <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 1rem; border-radius: 4px;">
+                    <strong>⚠️ Errores encontrados:</strong>
+                    <ul style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
+                        ${result.errors.map(err => `<li>${err}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+        } else {
+            errorsDiv.innerHTML = '';
+        }
+
+        // Display warnings if any
+        if (result.warnings && result.warnings.length > 0) {
+            errorsDiv.innerHTML += `
+                <div style="background: #e7f3ff; border: 1px solid #b3d9ff; padding: 1rem; border-radius: 4px; margin-top: 0.5rem;">
+                    <strong>ℹ️ Avisos:</strong>
+                    <ul style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
+                        ${result.warnings.map(warn => `<li>${warn}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+    }
+
+    // ==================== CONFIGURATION MANAGEMENT ====================
+
+    function loadConfiguracion() {
+        google.script.run
+            .withSuccessHandler(config => {
+                appData.config = config;
+                displayProveedores();
+                displayCategorias();
+            })
+            .getAllConfig();
+    }
+
+    function displayProveedores() {
+        const container = document.getElementById('proveedores-list');
+        const list = appData.config.proveedores || [];
+
+        if (list.length === 0) {
+            container.innerHTML = '<div class="config-empty">No hay proveedores configurados</div>';
+            return;
+        }
+
+        container.innerHTML = list.map(item => `
+            <div class="config-item">
+                <span class="config-item-name">${item}</span>
+                <button class="btn btn-small btn-danger" onclick="deleteConfig('Proveedor', '${item.replace(/'/g, "\\'")}')">Eliminar</button>
+            </div>
+        `).join('');
+    }
+
+    function displayCategorias() {
+        const container = document.getElementById('categorias-list');
+        const list = appData.config.categorias || [];
+
+        if (list.length === 0) {
+            container.innerHTML = '<div class="config-empty">No hay categorías configuradas</div>';
+            return;
+        }
+
+        container.innerHTML = list.map(item => `
+            <div class="config-item">
+                <span class="config-item-name">${item}</span>
+                <button class="btn btn-small btn-danger" onclick="deleteConfig('Categoria', '${item.replace(/'/g, "\\'")}')">Eliminar</button>
+            </div>
+        `).join('');
+    }
+
+    function showAddConfigModal(configType) {
+        currentConfigType = configType;
+        const title = configType === 'Proveedor' ? 'Añadir Proveedor' : 'Añadir Categoría';
+        document.getElementById('add-config-title').textContent = title;
+        document.getElementById('config-value-input').value = '';
+        document.getElementById('add-config-modal').classList.add('active');
+    }
+
+    function closeAddConfigModal() {
+        document.getElementById('add-config-modal').classList.remove('active');
+    }
+
+    function saveConfigValue() {
+        const value = document.getElementById('config-value-input').value.trim();
+        if (!value) {
+            alert('Por favor ingresa un valor');
+            return;
+        }
+
+        showLoading();
+        google.script.run
+            .withSuccessHandler(result => {
+                hideLoading();
+                if (result.success) {
+                    closeAddConfigModal();
+                    loadConfiguracion();
+                    updateProductFormDataLists();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            })
+            .withFailureHandler(err => {
+                hideLoading();
+                alert('Error: ' + err.message);
+            })
+            .addConfigValue(currentConfigType, value);
+    }
+
+    function deleteConfig(configType, value) {
+        if (!confirm(`¿Eliminar "${value}"?`)) return;
+
+        showLoading();
+        google.script.run
+            .withSuccessHandler(result => {
+                hideLoading();
+                if (result.success) {
+                    loadConfiguracion();
+                    updateProductFormDataLists();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            })
+            .withFailureHandler(err => {
+                hideLoading();
+                alert('Error: ' + err.message);
+            })
+            .deleteConfigValue(configType, value);
+    }
+
+    function setSelectValue(elementId, value, list) {
+        const select = document.getElementById(elementId);
+
+        if (!value) {
+            select.value = "";
+            return;
+        }
+
+        // If value exists in list, select it
+        if (list && list.includes(value)) {
+            select.value = value;
+        } else {
+            // If value doesn't exist in list (legacy data), add it as a temporary option
+            const option = document.createElement('option');
+            option.value = value;
+            option.text = value;
+            option.selected = true;
+            select.add(option);
+        }
+    }
+
+    function toggleCustomInput(type) {
+        const select = document.getElementById(`product-${type}`);
+        const customInput = document.getElementById(`product-${type}-custom`);
+
+        if (select.value === 'NEW') {
+            customInput.style.display = 'block';
+            customInput.focus();
+        } else {
+            customInput.style.display = 'none';
+            customInput.value = '';
+        }
+    }
+
+    function updateProductFormDataLists() {
+        const proveedoresSelect = document.getElementById('product-proveedor');
+        const categoriasSelect = document.getElementById('product-categoria');
+
+        if (proveedoresSelect && appData.config.proveedores) {
+            let options = '<option value="">Seleccionar...</option>';
+            options += appData.config.proveedores.map(p => `<option value="${p}">${p}</option>`).join('');
+            proveedoresSelect.innerHTML = options;
+        }
+
+        if (categoriasSelect && appData.config.categorias) {
+            let options = '<option value="">Seleccionar...</option>';
+            options += appData.config.categorias.map(c => `<option value="${c}">${c}</option>`).join('');
+            categoriasSelect.innerHTML = options;
+        }
+    }
+
+</script>
